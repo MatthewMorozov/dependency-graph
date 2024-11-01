@@ -4,6 +4,8 @@ import argparse
 import codecs
 from collections import defaultdict
 from graphviz import Digraph
+import pygraphviz as pgv
+import networkx as nx
 
 include_regex = re.compile('#include\s+["<"](.*)[">]')
 valid_headers = [['.h', '.hpp'], 'red']
@@ -21,15 +23,15 @@ def get_extension(path):
 	""" Return the extension of the file targeted by path. """
 	return path[path.rfind('.'):]
 
-def find_all_files(path, recursive=True):
+def find_all_files(path, ignore_folders, recursive=True):
 	""" 
 	Return a list of all the files in the folder.
 	If recursive is True, the function will search recursively.
 	"""
 	files = []
 	for entry in os.scandir(path):
-		if entry.is_dir() and recursive:
-			files += find_all_files(entry.path)
+		if entry.is_dir() and recursive and entry.name not in ignore_folders:
+			files += find_all_files(entry.path, ignore_folders)
 		elif get_extension(entry.path) in valid_extensions:
 			files.append(entry.path)
 	return files
@@ -41,10 +43,10 @@ def find_neighbors(path):
 	f.close()
 	return [normalize(include) for include in include_regex.findall(code)]
 
-def create_graph(folder, create_cluster, label_cluster, strict):
+def create_graph(folder, ignore_folders, create_cluster, label_cluster, strict):
 	""" Create a graph from a folder. """
 	# Find nodes and clusters
-	files = find_all_files(folder)
+	files = find_all_files(folder, ignore_folders)
 	folder_to_files = defaultdict(list)
 	for path in files:
 		folder_to_files[os.path.dirname(path)].append(path)
@@ -74,6 +76,19 @@ def create_graph(folder, create_cluster, label_cluster, strict):
 				cluster.attr(label=folder)
 	return graph
 
+def find_cycles(graph):
+	nx_graph = nx.nx_agraph.from_agraph(graph)
+	try:
+		cycles = list(nx.simple_cycles(nx_graph))
+		if not cycles:
+			print("No cycles found.")
+		else:
+			for cycle in cycles:
+				cycle.append(cycle[0])  # To complete the cycle
+				print("->".join(cycle) + f"->({cycle[0]})")
+	except nx.NetworkXNoCycle:
+		print("No cycles found.")
+
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
 	parser.add_argument('folder', help='Path to the folder to scan')
@@ -84,7 +99,8 @@ if __name__ == '__main__':
 	parser.add_argument('-c', '--cluster', action='store_true', help='Create a cluster for each subfolder')
 	parser.add_argument('--cluster-labels', dest='cluster_labels', action='store_true', help='Label subfolder clusters')
 	parser.add_argument('-s', '--strict', action='store_true', help='Rendering should merge multi-edges', default=False)
+	parser.add_argument('-i', '--ignore-folders', dest='ignore_folders', type=lambda s: s.split(','), help='A comma-separated list of folders to ignore')
 	args = parser.parse_args()
-	graph = create_graph(args.folder, args.cluster, args.cluster_labels, args.strict)
+	graph = create_graph(args.folder, args.ignore_folders, args.cluster, args.cluster_labels, args.strict)
 	graph.format = args.format
 	graph.render(args.output, cleanup=True, view=args.view)
